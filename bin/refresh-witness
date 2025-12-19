@@ -11,4 +11,12 @@ cd "$SCRIPT_DIR"
 if [ $? -eq 0 ] && [ -s /tmp/witness.edn ]; then
     cp /tmp/witness.edn /var/www/drops/foldunfold/api/witness
     chmod 644 /var/www/drops/foldunfold/api/witness
+
+    # Also create JSON version for easier browser consumption
+    # Using bb to convert EDN to JSON
+    bb -e "(require '[cheshire.core :as json]) (-> (slurp \"/tmp/witness.edn\") read-string (json/generate-string))" > /tmp/witness.json 2>/dev/null
+    if [ $? -eq 0 ] && [ -s /tmp/witness.json ]; then
+        cp /tmp/witness.json /var/www/drops/witness.json
+        chmod 644 /var/www/drops/witness.json
+    fi
 fi

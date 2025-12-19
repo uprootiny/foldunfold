@@ -30,15 +30,37 @@
 ;; INFRASTRUCTURE: What's deployed (changes occasionally)
 ;; ═══════════════════════════════════════════════════════════════════
 (defn witness-infrastructure []
-  (let [ports (->> (str/split-lines (sh "ss" "-tlnpH"))
-                   (keep #(when-let [[_ port] (re-find #":(\d+)\s" %)]
-                           (parse-long port)))
-                   (filter #(or (< % 1024) (> % 3000)))
-                   distinct sort vec)
+  (let [;; Get ports with process info
+        ss-lines (str/split-lines (sh "ss" "-tlnpH"))
+        port-info (->> ss-lines
+                       (keep #(when-let [[_ port proc] (re-find #":(\d+)\s.*users:\(\(\"([^\"]+)\"" %)]
+                               {:port (parse-long port) :process proc}))
+                       (filter #(or (< (:port %) 1024) (> (:port %) 3000))))
+        ports (->> port-info (map :port) distinct sort vec)
         nginx-sites (->> (try (fs/list-dir "/etc/nginx/sites-enabled") (catch Exception _ []))
-                         (map fs/file-name) vec)]
+                         (map fs/file-name) vec)
+        ;; Deployed apps in drops
+        apps (->> (try (fs/list-dir "/var/www/drops") (catch Exception _ []))
+                  (filter fs/directory?)
+                  (map fs/file-name)
+                  (remove #(str/starts-with? % "."))
+                  vec)
+        ;; Running web services on high ports
+        services (->> port-info
+                      (filter #(> (:port %) 8000))
+                      (map (fn [{:keys [port process]}]
+                             {:port port
+                              :name (cond
+                                      (str/includes? process "python") "python-http"
+                                      (str/includes? process "java") "clojure"
+                                      (str/includes? process "node") "node"
+                                      :else process)
+                              :url (str "http://173.212.203.211:" port "/")}))
+                      vec)]
     {:ports ports
      :nginx-sites nginx-sites
+     :apps apps
+     :services services
      :port-count (count ports)}))
 
 ;; ═══════════════════════════════════════════════════════════════════
@@ -54,12 +76,23 @@
      :dirty (not (str/blank? (sh-in "git" "status" "--porcelain")))}))
 
 (defn witness-projects []
-  (let [repos (->> ["/home/uprootiny/repos"]
-                   (filter fs/exists?)
-                   (mapcat #(fs/list-dir %))
-                   (filter #(fs/exists? (str % "/.git")))
-                   (map #(git-info (str %)))
-                   vec)]
+  (let [;; Scan multiple directories for git repos
+        repo-dirs ["/home/uprootiny/repos"
+                   "/home/uprootiny/dec16/xmasnumerai"
+                   "/home/uprootiny/dec19scratch/corpus_explorer"]
+        ;; Also check direct git repos in home
+        home-repos (->> (try (fs/list-dir "/home/uprootiny") (catch Exception _ []))
+                        (filter #(fs/exists? (str % "/.git")))
+                        (take 10))
+        all-repos (concat
+                    (->> repo-dirs
+                         (filter fs/exists?)
+                         (mapcat #(if (fs/exists? (str % "/.git"))
+                                   [%]
+                                   (try (fs/list-dir %) (catch Exception _ []))))
+                         (filter #(fs/exists? (str % "/.git"))))
+                    home-repos)
+        repos (->> all-repos (map #(git-info (str %))) vec)]
     {:repos repos
      :count (count repos)
      :dirty (count (filter :dirty repos))}))
