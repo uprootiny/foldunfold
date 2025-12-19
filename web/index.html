@@ -261,6 +261,30 @@
     .process-cpu.high { color: #dbab79; }
     .process-cpu.critical { color: #9b6b6b; }
 
+    /* Sessions grid */
+    .sessions-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+    .session-stat { background: var(--bg-deep); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 1rem; text-align: center; }
+    .session-stat .stat-value { font-family: var(--mono); font-size: 1.5rem; color: var(--text-primary); }
+    .session-stat .stat-label { font-size: 0.65rem; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0.25rem; }
+    .session-stat .stat-detail { font-size: 0.6rem; color: var(--sessions-color); margin-top: 0.25rem; }
+
+    /* Ephemera simplified */
+    .ephemera-grid { display: flex; gap: 2rem; margin-bottom: 0.75rem; }
+    .ephemera-metric { display: flex; gap: 0.5rem; align-items: baseline; }
+    .ephemera-label { font-family: var(--mono); font-size: 0.6rem; color: var(--text-tertiary); text-transform: uppercase; }
+    .ephemera-value { font-family: var(--mono); font-size: 0.8rem; color: var(--ephemera-color); }
+    .process-list { display: flex; flex-direction: column; gap: 0.25rem; }
+    .process-item { display: flex; gap: 0.75rem; padding: 0.3rem 0.5rem; background: var(--bg-deep); border-radius: 3px; font-family: var(--mono); font-size: 0.7rem; align-items: center; }
+    .process-cpu { min-width: 3rem; color: var(--text-secondary); }
+    .process-cpu.high { color: var(--ephemera-color); }
+    .process-cmd { flex: 1; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .process-pid { color: var(--text-tertiary); font-size: 0.6rem; }
+
+    /* Projects summary */
+    .projects-summary { display: flex; gap: 1rem; margin-bottom: 0.75rem; }
+    .summary-stat { font-family: var(--mono); font-size: 0.7rem; color: var(--text-secondary); }
+    .summary-stat.warn { color: #dbab79; }
+
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
     .controls { display: flex; justify-content: center; gap: 0.75rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-subtle); }
@@ -478,18 +502,24 @@
 
     function renderProjectsContent(data) {
       if (!data) return '<div class="error">No projects data</div>';
+      const repos = data.repositories || data.repos || [];
       return `
+        <div class="projects-summary">
+          <span class="summary-stat">${repos.length} repos</span>
+          <span class="summary-stat ${data['dirty-count'] > 0 ? 'warn' : ''}">${data['dirty-count'] || 0} dirty</span>
+        </div>
         <div class="projects-grid">
-          ${(data.repos || []).map(r => `
+          ${repos.map(r => `
             <div class="repo-card ${r.dirty ? 'dirty' : ''}">
               <div class="repo-header">
-                <span class="repo-name">${r.path?.split('/').pop() || r.path}</span>
-                <span class="repo-branch">${r.branch || 'unknown'}</span>
+                <span class="repo-name">${r.name || r.path?.split('/').pop()}</span>
+                <span class="repo-branch">${r.branch || 'main'}</span>
               </div>
               <div class="repo-meta">
-                ${r.dirty ? '<span class="dirty">dirty</span>' : '<span>clean</span>'}
-                <span>${r['last-commit']?.sha?.slice(0, 7) || ''}</span>
+                ${r.dirty ? `<span class="dirty">${r.changes || '?'} changes</span>` : '<span class="clean">clean</span>'}
+                <span class="commit">${r.commit || ''}</span>
               </div>
+              ${r.remote ? `<div class="repo-remote">${r.remote.replace('https://github.com/', '')}</div>` : ''}
             </div>
           `).join('')}
         </div>
@@ -529,30 +559,19 @@
 
     function renderSessionsContent(data) {
       if (!data) return '<div class="error">No sessions data</div>';
+      const tmux = data.tmux || {};
+      const claude = data.claude || {};
       return `
-        <div class="sessions-layout">
-          <div class="tmux-tree">
-            <div class="tmux-title">Tmux Sessions</div>
-            ${(data.tmux || []).length === 0 ? '<div style="color: var(--text-tertiary); font-size: 0.7rem;">No tmux sessions</div>' :
-              (data.tmux || []).map(s => `
-                <div class="tmux-session">
-                  <div class="tmux-session-header ${s.attached ? 'attached' : ''}">
-                    <span>${s.name}</span>
-                    <span style="margin-left: auto; font-size: 0.6rem; color: var(--text-tertiary);">${s.windows} windows</span>
-                  </div>
-                </div>
-              `).join('')}
+        <div class="sessions-grid">
+          <div class="session-stat">
+            <div class="stat-value">${tmux.count || 0}</div>
+            <div class="stat-label">tmux sessions</div>
+            <div class="stat-detail">${tmux.attached || 0} attached</div>
           </div>
-          <div class="agents-panel">
-            <div class="tmux-title">Active Agents</div>
-            ${(data.agents || []).length === 0 ? '<div style="color: var(--text-tertiary); font-size: 0.7rem;">No agents detected</div>' :
-              (data.agents || []).map(a => `
-                <div class="agent-item">
-                  <div class="agent-status"></div>
-                  <span class="agent-name">${a.type}</span>
-                  <span class="agent-meta">pid ${a.pid}</span>
-                </div>
-              `).join('')}
+          <div class="session-stat">
+            <div class="stat-value">${claude.count || 0}</div>
+            <div class="stat-label">claude agents</div>
+            <div class="stat-detail">active</div>
           </div>
         </div>
       `;
@@ -598,56 +617,24 @@
     function renderEphemeraContent(data) {
       if (!data) return '<div class="error">No ephemera data</div>';
       return `
-        <div class="ephemera-layout">
-          <div class="fluff-panel">
-            <div class="fluff-header">
-              <div class="fluff-source-dot" style="background: var(--ephemera-color)"></div>
-              <span class="fluff-source-label">Live Metrics</span>
-            </div>
-            <div class="fluff-content">
-              <div class="fluff-metric">
-                <span class="fluff-metric-label">uptime</span>
-                <span class="fluff-metric-value live"><span class="live-indicator"></span>${Math.floor((data['uptime-seconds'] || 0) / 86400)}d</span>
-              </div>
-              <div class="fluff-metric">
-                <span class="fluff-metric-label">processes</span>
-                <span class="fluff-metric-value">${(data.processes || []).length}</span>
-              </div>
-              <div class="fluff-metric">
-                <span class="fluff-metric-label">connections</span>
-                <span class="fluff-metric-value">${(data.connections?.established || 0) + (data.connections?.listening || 0)}</span>
-              </div>
-              <div class="fluff-metric">
-                <span class="fluff-metric-label">load</span>
-                <span class="fluff-metric-value">${data.load?.['1m'] || 0} / ${data.load?.['5m'] || 0} / ${data.load?.['15m'] || 0}</span>
-              </div>
-            </div>
+        <div class="ephemera-grid">
+          <div class="ephemera-metric">
+            <span class="ephemera-label">uptime</span>
+            <span class="ephemera-value">${data.uptime || '?'}</span>
           </div>
-          <div class="fluff-panel" style="grid-column: span 2;">
-            <div class="fluff-header">
-              <div class="fluff-source-dot" style="background: var(--ephemera-color)"></div>
-              <span class="fluff-source-label">Top Processes</span>
-            </div>
-            <div class="fluff-content" style="padding: 0;">
-              <table class="process-table">
-                <thead><tr><th>PID</th><th>User</th><th>CPU%</th><th>MEM%</th><th>Command</th></tr></thead>
-                <tbody>
-                  ${(data.processes || []).slice(0, 5).map(p => `
-                    <tr>
-                      <td>${p.pid}</td>
-                      <td>${p.user}</td>
-                      <td class="process-cpu ${p.cpu > 50 ? 'critical' : p.cpu > 20 ? 'high' : ''}">${p.cpu}</td>
-                      <td>${p.mem}</td>
-                      <td>${(p.cmd || '').slice(0, 40)}</td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
+          <div class="ephemera-metric">
+            <span class="ephemera-label">timestamp</span>
+            <span class="ephemera-value">${data.timestamp?.slice(11, 19) || '?'}</span>
           </div>
         </div>
-        <div style="font-size: 0.65rem; color: var(--text-tertiary); margin-top: 0.5rem; text-align: center;">
-          <span class="live-indicator"></span> ${data.timestamp ? new Date(data.timestamp).toISOString() : 'unknown'}
+        <div class="process-list">
+          ${(data.top || []).map(p => `
+            <div class="process-item">
+              <span class="process-cpu ${p.cpu > 20 ? 'high' : ''}">${p.cpu.toFixed(1)}%</span>
+              <span class="process-cmd">${p.cmd}</span>
+              <span class="process-pid">${p.pid}</span>
+            </div>
+          `).join('')}
         </div>
       `;
     }
@@ -682,12 +669,21 @@
       }
 
       const data = state.data || {};
-      const strata = data.strata || {};
+      // Data is at top level, not nested under strata
+      const strata = {
+        schema: data.schema,
+        infrastructure: data.infrastructure,
+        projects: data.projects,
+        pipelines: data.pipelines,
+        sessions: data.sessions,
+        resources: data.resources,
+        ephemera: data.ephemera
+      };
 
       app.innerHTML = `
         <header class="header">
           <div>
-            <div class="server-name">${strata.schema?.hostname || data.hostname || 'hyperstitious'}</div>
+            <div class="server-name">${data['witness/server'] || data.schema?.hostname || 'hyperstitious'}</div>
             <div class="server-subtitle">Seven strata of permanence — essence ↔ manifestation</div>
           </div>
           <div class="header-meta">

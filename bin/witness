@@ -1,0 +1,145 @@
+#!/usr/bin/env bb
+;; witness: Single consolidated witness tool
+;; Outputs all 7 strata as EDN in one efficient pass
+
+(require '[clojure.string :as str]
+         '[babashka.process :refer [shell]]
+         '[babashka.fs :as fs]
+         '[clojure.edn :as edn])
+
+(defn sh [& args]
+  (try
+    (-> (apply shell {:out :string :err :string} args)
+        :out str/trim)
+    (catch Exception _ "")))
+
+;; ═══════════════════════════════════════════════════════════════════
+;; SCHEMA: Server identity (rarely changes)
+;; ═══════════════════════════════════════════════════════════════════
+(defn witness-schema []
+  {:hostname (sh "hostname")
+   :cores (parse-long (sh "nproc"))
+   :memory-gb (-> (sh "awk" "/MemTotal/ {printf \"%.1f\", $2/1024/1024}" "/proc/meminfo")
+                  (Double/parseDouble))
+   :os (let [os-release (try (slurp "/etc/os-release") (catch Exception _ ""))]
+         {:type (keyword (second (re-find #"ID=(\w+)" os-release)))
+          :version (second (re-find #"VERSION_ID=\"?([^\"]+)\"?" os-release))})
+   :ip (first (str/split (sh "hostname" "-I") #"\s+"))})
+
+;; ═══════════════════════════════════════════════════════════════════
+;; INFRASTRUCTURE: What's deployed (changes occasionally)
+;; ═══════════════════════════════════════════════════════════════════
+(defn witness-infrastructure []
+  (let [ports (->> (str/split-lines (sh "ss" "-tlnpH"))
+                   (keep #(when-let [[_ port] (re-find #":(\d+)\s" %)]
+                           (parse-long port)))
+                   (filter #(or (< % 1024) (> % 3000)))
+                   distinct sort vec)
+        nginx-sites (->> (try (fs/list-dir "/etc/nginx/sites-enabled") (catch Exception _ []))
+                         (map fs/file-name) vec)]
+    {:ports ports
+     :nginx-sites nginx-sites
+     :port-count (count ports)}))
+
+;; ═══════════════════════════════════════════════════════════════════
+;; PROJECTS: Git repos (changes with commits)
+;; ═══════════════════════════════════════════════════════════════════
+(defn git-info [path]
+  (let [sh-in (fn [& args]
+                (try (-> (apply shell {:out :string :err :string :dir path} args) :out str/trim)
+                     (catch Exception _ "")))]
+    {:name (fs/file-name path)
+     :branch (sh-in "git" "rev-parse" "--abbrev-ref" "HEAD")
+     :commit (sh-in "git" "rev-parse" "--short" "HEAD")
+     :dirty (not (str/blank? (sh-in "git" "status" "--porcelain")))}))
+
+(defn witness-projects []
+  (let [repos (->> ["/home/uprootiny/repos"]
+                   (filter fs/exists?)
+                   (mapcat #(fs/list-dir %))
+                   (filter #(fs/exists? (str % "/.git")))
+                   (map #(git-info (str %)))
+                   vec)]
+    {:repos repos
+     :count (count repos)
+     :dirty (count (filter :dirty repos))}))
+
+;; ═══════════════════════════════════════════════════════════════════
+;; PIPELINES: Scheduled work (changes rarely)
+;; ═══════════════════════════════════════════════════════════════════
+(defn witness-pipelines []
+  (let [cron (let [out (sh "crontab" "-l")]
+               (if (str/includes? out "no crontab") []
+                   (->> (str/split-lines out)
+                        (remove #(or (str/blank? %) (str/starts-with? % "#")))
+                        (mapv #(last (str/split % #"\s+" 6))))))
+        timers (->> (str/split-lines (sh "systemctl" "list-timers" "--no-pager" "--no-legend"))
+                    (keep #(second (re-find #"(\S+)\.timer" %)))
+                    vec)]
+    {:cron cron :timers timers}))
+
+;; ═══════════════════════════════════════════════════════════════════
+;; SESSIONS: Active work (changes frequently)
+;; ═══════════════════════════════════════════════════════════════════
+(defn witness-sessions []
+  (let [tmux (->> (str/split-lines (sh "tmux" "list-sessions" "-F" "#{session_name}:#{session_windows}:#{session_attached}"))
+                  (keep #(let [[n w a] (str/split % #":")]
+                          (when n {:name n :windows (parse-long w) :attached (= a "1")})))
+                  vec)
+        claude (->> (str/split-lines (sh "pgrep" "-a" "claude"))
+                    (keep #(when-let [[_ pid] (re-find #"^(\d+)" %)]
+                            {:pid (parse-long pid)}))
+                    vec)]
+    {:tmux {:count (count tmux) :attached (count (filter :attached tmux))}
+     :claude {:count (count claude)}}))
+
+;; ═══════════════════════════════════════════════════════════════════
+;; RESOURCES: Current allocation (changes continuously)
+;; ═══════════════════════════════════════════════════════════════════
+(defn witness-resources []
+  (let [[l1 l5 l15 procs] (str/split (sh "cat" "/proc/loadavg") #"\s+")
+        cores (parse-long (sh "nproc"))
+        meminfo (sh "cat" "/proc/meminfo")
+        mem-total (-> (re-find #"MemTotal:\s+(\d+)" meminfo) second parse-long (/ 1024 1024))
+        mem-avail (-> (re-find #"MemAvailable:\s+(\d+)" meminfo) second parse-long (/ 1024 1024))
+        disk-pct (-> (sh "df" "/" "--output=pcent")
+                     (str/split #"\n") second str/trim
+                     (str/replace "%" "") parse-long)]
+    {:cpu {:load [(Double/parseDouble l1) (Double/parseDouble l5) (Double/parseDouble l15)]
+           :cores cores
+           :headroom (long (- 100 (* 100.0 (/ (Double/parseDouble l1) cores))))}
+     :mem {:total-gb (/ (long (* 10.0 mem-total)) 10.0)
+           :used-pct (long (- 100 (* 100.0 (/ mem-avail mem-total))))}
+     :disk {:used-pct disk-pct}}))
+
+;; ═══════════════════════════════════════════════════════════════════
+;; EPHEMERA: Right now (snapshot)
+;; ═══════════════════════════════════════════════════════════════════
+(defn witness-ephemera []
+  (let [uptime-raw (sh "cat" "/proc/uptime")
+        uptime-secs (-> (first (str/split uptime-raw #"\s+")) Double/parseDouble long)
+        uptime-days (quot uptime-secs 86400)
+        uptime-hours (quot (mod uptime-secs 86400) 3600)
+        top (->> (str/split-lines (sh "ps" "aux" "--sort=-%cpu" "--no-headers"))
+                 (take 5)
+                 (mapv #(let [[user pid cpu mem & rest] (str/split % #"\s+" 11)]
+                         {:pid (parse-long pid) :cpu (Double/parseDouble cpu)
+                          :cmd (str/join " " (take-last 1 (str/split (str/join " " rest) #"\s+")))})))]
+    {:uptime (str uptime-days "d " uptime-hours "h")
+     :top top
+     :timestamp (sh "date" "-Iseconds")}))
+
+;; ═══════════════════════════════════════════════════════════════════
+;; MAIN: Aggregate all strata
+;; ═══════════════════════════════════════════════════════════════════
+(let [witness {:version "0.2"
+               :server (sh "hostname")
+               :timestamp (sh "date" "-Iseconds")
+               :schema (witness-schema)
+               :infrastructure (witness-infrastructure)
+               :projects (witness-projects)
+               :pipelines (witness-pipelines)
+               :sessions (witness-sessions)
+               :resources (witness-resources)
+               :ephemera (witness-ephemera)}]
+  (println (pr-str witness)))
