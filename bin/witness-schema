@@ -1,0 +1,36 @@
+#!/bin/bash
+# witness-schema: Output the server's identity and hardware profile as EDN
+
+set -e
+
+HOSTNAME=$(hostname)
+CPU_MODEL=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)
+CPU_CORES=$(nproc)
+MEM_GB=$(awk '/MemTotal/ {printf "%.1f", $2/1024/1024}' /proc/meminfo)
+PUBLIC_IP=$(hostname -I | awk '{print $1}')
+
+# Detect OS
+if [ -f /etc/os-release ]; then
+  . /etc/os-release
+  OS_TYPE=$(echo "$ID" | tr '[:upper:]' '[:lower:]')
+  OS_VERSION="$VERSION_ID"
+else
+  OS_TYPE="unknown"
+  OS_VERSION="unknown"
+fi
+
+# Get network interfaces
+INTERFACES=$(ip -o link show | awk -F': ' '{print $2}' | grep -v '^lo$' | tr '\n' ' ')
+
+cat << EOF
+{:hostname "$HOSTNAME"
+ :hardware {:cpu "$CPU_MODEL"
+            :cores $CPU_CORES
+            :memory-gb $MEM_GB}
+ :network {:public-ip "$PUBLIC_IP"
+           :interfaces [$(echo $INTERFACES | sed 's/ *$//' | sed 's/ /" "/g' | sed 's/^/"/' | sed 's/$/"/')]}
+ :os {:type :$OS_TYPE
+      :version "$OS_VERSION"}
+ :identity {:role :web
+            :name "$HOSTNAME"}}
+EOF

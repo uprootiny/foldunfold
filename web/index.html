@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Server Status — Permanence Gradient</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Serif:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --schema-color: #a89070;
+      --infra-color: #70a870;
+      --projects-color: #7090a8;
+      --pipelines-color: #9080a8;
+      --sessions-color: #a89080;
+      --resources-color: #80a890;
+      --ephemera-color: #a87070;
+
+      --bg-deep: #08080a;
+      --bg-surface: #0e0e10;
+      --bg-elevated: #161618;
+      --bg-hover: #1e1e22;
+
+      --text-primary: #e8e6e3;
+      --text-secondary: #9a9590;
+      --text-tertiary: #5a5550;
+
+      --border-subtle: #252528;
+      --border-accent: #353538;
+
+      --mono: 'JetBrains Mono', monospace;
+      --sans: 'IBM Plex Sans', sans-serif;
+      --serif: 'IBM Plex Serif', serif;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--sans);
+      font-size: 14px;
+      background: var(--bg-deep);
+      color: var(--text-primary);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 1.5rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .server-name { font-family: var(--mono); font-size: 1.2rem; font-weight: 500; }
+    .server-subtitle { font-size: 0.8rem; color: var(--text-tertiary); margin-top: 0.25rem; font-family: var(--serif); font-style: italic; }
+    .header-meta { text-align: right; font-family: var(--mono); font-size: 0.65rem; color: var(--text-tertiary); }
+
+    .strata { display: flex; flex-direction: column; }
+
+    .stratum {
+      position: relative;
+      border: 1px solid var(--border-subtle);
+      border-bottom: none;
+      background: var(--bg-surface);
+      transition: background 150ms ease;
+    }
+
+    .stratum:last-child { border-bottom: 1px solid var(--border-subtle); }
+    .stratum:hover { background: var(--bg-elevated); }
+
+    .stratum::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 4px;
+      background: var(--stratum-color);
+    }
+
+    .stratum[data-stratum="schema"] { --stratum-color: var(--schema-color); }
+    .stratum[data-stratum="infrastructure"] { --stratum-color: var(--infra-color); }
+    .stratum[data-stratum="projects"] { --stratum-color: var(--projects-color); }
+    .stratum[data-stratum="pipelines"] { --stratum-color: var(--pipelines-color); }
+    .stratum[data-stratum="sessions"] { --stratum-color: var(--sessions-color); }
+    .stratum[data-stratum="resources"] { --stratum-color: var(--resources-color); }
+    .stratum[data-stratum="ephemera"] { --stratum-color: var(--ephemera-color); }
+
+    .stratum-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.6rem 1rem 0.6rem 1.5rem;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .stratum-title { display: flex; align-items: baseline; gap: 0.75rem; }
+
+    .stratum-name {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--stratum-color);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .stratum-tagline {
+      font-family: var(--serif);
+      font-size: 0.75rem;
+      font-style: italic;
+      color: var(--text-tertiary);
+    }
+
+    .stratum-meta {
+      font-family: var(--mono);
+      font-size: 0.6rem;
+      color: var(--text-tertiary);
+    }
+
+    .stratum-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 400ms ease;
+    }
+
+    .stratum.expanded .stratum-content { max-height: 3000px; }
+
+    .stratum-content-inner { padding: 0 1rem 1.25rem 1.5rem; }
+
+    /* Schema */
+    .schema-fixpoint { display: grid; grid-template-columns: 200px 1fr; gap: 1rem; margin-bottom: 1rem; }
+    .schema-nav { display: flex; flex-direction: column; gap: 2px; }
+    .schema-nav-item {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.5rem 0.75rem; background: var(--bg-deep);
+      border: 1px solid transparent; border-radius: 3px;
+      font-family: var(--mono); font-size: 0.65rem;
+      color: var(--text-secondary); cursor: pointer;
+      transition: all 150ms ease;
+    }
+    .schema-nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .schema-nav-item.active { border-color: var(--stratum-color); color: var(--stratum-color); }
+    .schema-nav-item.self-ref { font-style: italic; }
+    .schema-nav-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dot-color); opacity: 0.7; }
+    .schema-display {
+      background: var(--bg-deep); border: 1px solid var(--border-subtle);
+      border-radius: 4px; padding: 1rem; font-family: var(--mono);
+      font-size: 0.7rem; line-height: 1.6; overflow: auto; max-height: 400px;
+    }
+    .schema-display .type { color: #d4879c; }
+    .schema-display .key { color: #7eb8da; }
+    .schema-display .comment { color: var(--text-tertiary); font-style: italic; }
+    .schema-display .self-reference { color: var(--schema-color); font-weight: 500; }
+    .fixpoint-indicator {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      padding: 0.15rem 0.4rem; background: rgba(168, 144, 112, 0.15);
+      border: 1px solid rgba(168, 144, 112, 0.3); border-radius: 3px;
+      font-size: 0.6rem; color: var(--schema-color);
+    }
+
+    /* Infrastructure */
+    .infra-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem; }
+    .infra-section { background: var(--bg-deep); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 0.75rem; }
+    .infra-section-title {
+      font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-tertiary);
+      margin-bottom: 0.5rem; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border-subtle);
+    }
+    .service-list { display: flex; flex-direction: column; gap: 0.3rem; }
+    .service-item {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.3rem 0.5rem; background: var(--bg-surface);
+      border-radius: 3px; font-family: var(--mono); font-size: 0.7rem;
+    }
+    .service-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .service-dot.running { background: #6b9b6b; }
+    .service-dot.stopped { background: #9b6b6b; }
+    .service-dot.unknown { background: var(--text-tertiary); }
+    .port-grid { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .port-badge { padding: 0.2rem 0.5rem; background: var(--bg-surface); border-radius: 3px; font-family: var(--mono); font-size: 0.65rem; }
+    .port-badge .port { color: var(--infra-color); }
+    .port-badge .process { color: var(--text-tertiary); margin-left: 0.3rem; }
+
+    /* Projects */
+    .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0.75rem; }
+    .repo-card {
+      background: var(--bg-deep); border: 1px solid var(--border-subtle);
+      border-radius: 4px; padding: 0.75rem; transition: border-color 150ms ease;
+    }
+    .repo-card:hover { border-color: var(--projects-color); }
+    .repo-card.dirty { border-left: 3px solid #dbab79; }
+    .repo-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; }
+    .repo-name { font-family: var(--mono); font-size: 0.8rem; font-weight: 500; color: var(--projects-color); }
+    .repo-branch { font-family: var(--mono); font-size: 0.6rem; padding: 0.1rem 0.4rem; background: var(--bg-surface); border-radius: 3px; color: var(--text-secondary); }
+    .repo-meta { display: flex; gap: 1rem; font-family: var(--mono); font-size: 0.6rem; color: var(--text-tertiary); }
+    .repo-meta .dirty { color: #dbab79; }
+
+    /* Resources */
+    .resources-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+    .resource-gauge { background: var(--bg-deep); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 0.75rem; text-align: center; }
+    .gauge-label { font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); margin-bottom: 0.5rem; }
+    .gauge-value { font-family: var(--mono); font-size: 1.8rem; font-weight: 500; line-height: 1; }
+    .gauge-value.ok { color: #6b9b6b; }
+    .gauge-value.warn { color: #dbab79; }
+    .gauge-value.critical { color: #9b6b6b; }
+    .gauge-detail { font-family: var(--mono); font-size: 0.6rem; color: var(--text-tertiary); margin-top: 0.3rem; }
+    .gauge-bar { height: 4px; background: var(--bg-hover); border-radius: 2px; margin-top: 0.5rem; overflow: hidden; }
+    .gauge-fill { height: 100%; border-radius: 2px; transition: width 300ms ease; }
+    .gauge-fill.ok { background: #6b9b6b; }
+    .gauge-fill.warn { background: #dbab79; }
+    .gauge-fill.critical { background: #9b6b6b; }
+
+    /* Sessions */
+    .sessions-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 800px) { .sessions-layout { grid-template-columns: 1fr; } }
+    .tmux-tree { background: var(--bg-deep); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 1rem; }
+    .tmux-title { font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); margin-bottom: 0.75rem; }
+    .tmux-session { margin-bottom: 0.75rem; }
+    .tmux-session-header { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; background: var(--bg-surface); border-radius: 4px; font-family: var(--mono); font-size: 0.75rem; }
+    .tmux-session-header.attached { border-left: 3px solid var(--sessions-color); }
+    .tmux-windows { margin-left: 1.5rem; padding-left: 0.75rem; border-left: 1px solid var(--border-subtle); margin-top: 0.3rem; }
+    .tmux-window { display: flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.5rem; font-family: var(--mono); font-size: 0.65rem; color: var(--text-secondary); }
+    .tmux-window.active { color: var(--sessions-color); }
+    .agents-panel { background: var(--bg-deep); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 1rem; }
+    .agent-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: var(--bg-surface); border-radius: 4px; margin-bottom: 0.4rem; }
+    .agent-status { width: 8px; height: 8px; border-radius: 50%; background: #6b9b6b; animation: pulse 2s infinite; }
+    .agent-name { font-family: var(--mono); font-size: 0.7rem; }
+    .agent-meta { font-size: 0.6rem; color: var(--text-tertiary); margin-left: auto; }
+
+    /* Ephemera */
+    .ephemera-layout { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 0.75rem; }
+    .fluff-panel { background: var(--bg-deep); border: 1px solid var(--border-subtle); border-radius: 4px; overflow: hidden; }
+    .fluff-header { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; background: var(--bg-surface); border-bottom: 1px solid var(--border-subtle); }
+    .fluff-source-dot { width: 8px; height: 8px; border-radius: 50%; opacity: 0.8; }
+    .fluff-source-label { font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); }
+    .fluff-link { margin-left: auto; font-family: var(--mono); font-size: 0.55rem; color: var(--text-tertiary); cursor: pointer; transition: color 150ms ease; }
+    .fluff-link:hover { color: var(--text-primary); }
+    .fluff-content { padding: 0.75rem; font-family: var(--mono); font-size: 0.7rem; }
+    .fluff-metric { display: flex; justify-content: space-between; padding: 0.2rem 0; border-bottom: 1px solid var(--border-subtle); }
+    .fluff-metric:last-child { border-bottom: none; }
+    .fluff-metric-label { color: var(--text-secondary); }
+    .fluff-metric-value { color: var(--text-primary); }
+    .fluff-metric-value.live { color: #6b9b6b; }
+    .live-indicator { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #6b9b6b; margin-right: 0.3rem; animation: pulse 1.5s infinite; }
+
+    .process-table { width: 100%; font-family: var(--mono); font-size: 0.65rem; }
+    .process-table th { text-align: left; padding: 0.3rem 0.5rem; color: var(--text-tertiary); font-weight: normal; text-transform: uppercase; font-size: 0.55rem; border-bottom: 1px solid var(--border-subtle); }
+    .process-table td { padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border-subtle); }
+    .process-table tr:last-child td { border-bottom: none; }
+    .process-cpu.high { color: #dbab79; }
+    .process-cpu.critical { color: #9b6b6b; }
+
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    .controls { display: flex; justify-content: center; gap: 0.75rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-subtle); }
+    .btn { font-family: var(--mono); font-size: 0.65rem; padding: 0.4rem 0.8rem; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: 3px; color: var(--text-secondary); cursor: pointer; transition: all 150ms ease; }
+    .btn:hover { background: var(--bg-surface); color: var(--text-primary); }
+    .btn.schema-btn { border-color: var(--schema-color); color: var(--schema-color); }
+    .btn.ephemera-btn { border-color: var(--ephemera-color); color: var(--ephemera-color); }
+    .invariant-note { text-align: center; margin-top: 1rem; font-family: var(--serif); font-size: 0.75rem; font-style: italic; color: var(--text-tertiary); }
+
+    .loading { text-align: center; padding: 3rem; color: var(--text-tertiary); }
+    .error { text-align: center; padding: 2rem; color: #9b6b6b; background: rgba(155, 107, 107, 0.1); border-radius: 4px; margin: 1rem 0; }
+  </style>
+</head>
+<body>
+  <div id="app" class="container">
+    <div class="loading">Fetching witness data...</div>
+  </div>
+
+  <script>
+    const STRATA_CONFIG = [
+      { id: 'schema', name: 'Schema', tagline: 'The fixpoint — self-description' },
+      { id: 'infrastructure', name: 'Infrastructure', tagline: 'Deployed configuration' },
+      { id: 'projects', name: 'Projects', tagline: 'Repositories and code' },
+      { id: 'pipelines', name: 'Pipelines', tagline: 'Scheduled jobs and data flows' },
+      { id: 'sessions', name: 'Sessions', tagline: 'Tmux trees and agents' },
+      { id: 'resources', name: 'Resources', tagline: 'Utilization and headroom' },
+      { id: 'ephemera', name: 'Ephemera', tagline: 'Fluff aggregation — all surfaces' }
+    ];
+
+    const STRATUM_COLORS = {
+      schema: '#a89070', infrastructure: '#70a870', projects: '#7090a8',
+      pipelines: '#9080a8', sessions: '#a89080', resources: '#80a890', ephemera: '#a87070'
+    };
+
+    let state = {
+      data: null,
+      error: null,
+      loading: true,
+      expanded: new Set(['schema', 'resources', 'ephemera']),
+      selectedSchema: 'schema'
+    };
+
+    // EDN Parser (minimal)
+    function parseEDN(s) {
+      let pos = 0;
+      function skipWS() { while (pos < s.length && /[\s,]/.test(s[pos])) pos++; }
+      function parseValue() {
+        skipWS();
+        if (pos >= s.length) return null;
+        const c = s[pos];
+        if (c === '{') return parseMap();
+        if (c === '[') return parseVector();
+        if (c === '#') return parseTagged();
+        if (c === ':') return parseKeyword();
+        if (c === '"') return parseString();
+        if (c === '-' || /\d/.test(c)) return parseNumber();
+        if (s.slice(pos, pos + 3) === 'nil') { pos += 3; return null; }
+        if (s.slice(pos, pos + 4) === 'true') { pos += 4; return true; }
+        if (s.slice(pos, pos + 5) === 'false') { pos += 5; return false; }
+        return parseSymbol();
+      }
+      function parseMap() {
+        pos++;
+        const m = {};
+        while (true) {
+          skipWS();
+          if (s[pos] === '}') { pos++; return m; }
+          const k = parseValue();
+          const v = parseValue();
+          m[typeof k === 'string' && k.startsWith(':') ? k.slice(1) : k] = v;
+        }
+      }
+      function parseVector() {
+        pos++;
+        const v = [];
+        while (true) {
+          skipWS();
+          if (s[pos] === ']') { pos++; return v; }
+          v.push(parseValue());
+        }
+      }
+      function parseTagged() {
+        pos++;
+        if (s.slice(pos, pos + 4) === 'inst') {
+          pos += 4; skipWS();
+          return new Date(parseString());
+        }
+        if (s[pos] === '{') return new Set(Object.values(parseMap()));
+        let tag = '';
+        while (pos < s.length && /[\w\-]/.test(s[pos])) tag += s[pos++];
+        skipWS();
+        return { tag, value: parseValue() };
+      }
+      function parseKeyword() {
+        pos++;
+        let kw = ':';
+        while (pos < s.length && /[\w\-\/\.]/.test(s[pos])) kw += s[pos++];
+        return kw;
+      }
+      function parseString() {
+        pos++;
+        let str = '';
+        while (s[pos] !== '"') {
+          if (s[pos] === '\\') { pos++; str += s[pos] === 'n' ? '\n' : s[pos] === 't' ? '\t' : s[pos]; }
+          else str += s[pos];
+          pos++;
+        }
+        pos++;
+        return str;
+      }
+      function parseNumber() {
+        let num = '';
+        if (s[pos] === '-') num += s[pos++];
+        while (/[\d\.]/.test(s[pos])) num += s[pos++];
+        return num.includes('.') ? parseFloat(num) : parseInt(num);
+      }
+      function parseSymbol() {
+        let sym = '';
+        while (pos < s.length && /[\w\-\/\.\+\*]/.test(s[pos])) sym += s[pos++];
+        return sym;
+      }
+      return parseValue();
+    }
+
+    async function fetchWitness() {
+      try {
+        state.loading = true;
+        state.error = null;
+        render();
+
+        const res = await fetch('/foldunfold/api/witness', { cache: 'no-cache' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const text = await res.text();
+        const contentType = res.headers.get('content-type') || '';
+
+        let data;
+        if (contentType.includes('application/json')) {
+          data = JSON.parse(text);
+        } else if (contentType.includes('application/edn') || text.trim().startsWith('{')) {
+          data = parseEDN(text);
+        } else {
+          data = JSON.parse(text);
+        }
+
+        state.data = data;
+        state.loading = false;
+        render();
+      } catch (e) {
+        state.error = e.message;
+        state.loading = false;
+        render();
+      }
+    }
+
+    function renderSchemaContent(data) {
+      if (!data) return '<div class="error">No schema data</div>';
+      return `
+        <div class="schema-fixpoint">
+          <div class="schema-nav">
+            ${STRATA_CONFIG.map(s => `
+              <div class="schema-nav-item ${s.id === state.selectedSchema ? 'active' : ''} ${s.id === 'schema' ? 'self-ref' : ''}"
+                   style="--dot-color: ${STRATUM_COLORS[s.id]}"
+                   onclick="selectSchema('${s.id}')">
+                <div class="schema-nav-dot"></div>
+                <span>${s.id}</span>
+                ${s.id === 'schema' ? '<span class="fixpoint-indicator">∞</span>' : ''}
+              </div>
+            `).join('')}
+          </div>
+          <div class="schema-display">
+            <div><span class="comment">;; ${data.hostname || 'unknown'}</span></div>
+            <div><span class="comment">;; ${data.os?.type || 'linux'} ${data.os?.version || ''}</span></div>
+            <div></div>
+            <div><span class="key">:hostname</span> <span class="type">"${data.hostname || ''}"</span></div>
+            <div><span class="key">:cores</span> <span class="type">${data.hardware?.cores || 0}</span></div>
+            <div><span class="key">:memory-gb</span> <span class="type">${data.hardware?.['memory-gb'] || 0}</span></div>
+            <div><span class="key">:public-ip</span> <span class="type">"${data.network?.['public-ip'] || ''}"</span></div>
+            <div><span class="key">:role</span> <span class="type">${data.identity?.role || ':unknown'}</span></div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderInfrastructureContent(data) {
+      if (!data) return '<div class="error">No infrastructure data</div>';
+      return `
+        <div class="infra-grid">
+          <div class="infra-section">
+            <div class="infra-section-title">Services</div>
+            <div class="service-list">
+              ${(data.services || []).map(s => `
+                <div class="service-item">
+                  <div class="service-dot ${s.status || 'unknown'}"></div>
+                  <span>${s.name}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          <div class="infra-section">
+            <div class="infra-section-title">Containers</div>
+            <div class="service-list">
+              ${(data.containers || []).length === 0 ? '<div style="color: var(--text-tertiary); font-size: 0.7rem;">No containers</div>' :
+                (data.containers || []).map(c => `
+                  <div class="service-item">
+                    <div class="service-dot ${c.status || 'unknown'}"></div>
+                    <span>${c.id || c.name}</span>
+                  </div>
+                `).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderProjectsContent(data) {
+      if (!data) return '<div class="error">No projects data</div>';
+      return `
+        <div class="projects-grid">
+          ${(data.repos || []).map(r => `
+            <div class="repo-card ${r.dirty ? 'dirty' : ''}">
+              <div class="repo-header">
+                <span class="repo-name">${r.path?.split('/').pop() || r.path}</span>
+                <span class="repo-branch">${r.branch || 'unknown'}</span>
+              </div>
+              <div class="repo-meta">
+                ${r.dirty ? '<span class="dirty">dirty</span>' : '<span>clean</span>'}
+                <span>${r['last-commit']?.sha?.slice(0, 7) || ''}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function renderPipelinesContent(data) {
+      if (!data) return '<div class="error">No pipelines data</div>';
+      return `
+        <div class="infra-grid">
+          <div class="infra-section">
+            <div class="infra-section-title">Cron Jobs</div>
+            <div class="service-list">
+              ${(data.cron || []).length === 0 ? '<div style="color: var(--text-tertiary); font-size: 0.7rem;">No cron jobs found</div>' :
+                (data.cron || []).map(c => `
+                  <div class="service-item">
+                    <span>${c.command || c.schedule}</span>
+                  </div>
+                `).join('')}
+            </div>
+          </div>
+          <div class="infra-section">
+            <div class="infra-section-title">Active Jobs</div>
+            <div class="service-list">
+              ${(data.jobs || []).length === 0 ? '<div style="color: var(--text-tertiary); font-size: 0.7rem;">No active jobs</div>' :
+                (data.jobs || []).map(j => `
+                  <div class="service-item">
+                    <div class="service-dot ${j.status || 'running'}"></div>
+                    <span>${j.name}</span>
+                  </div>
+                `).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderSessionsContent(data) {
+      if (!data) return '<div class="error">No sessions data</div>';
+      return `
+        <div class="sessions-layout">
+          <div class="tmux-tree">
+            <div class="tmux-title">Tmux Sessions</div>
+            ${(data.tmux || []).length === 0 ? '<div style="color: var(--text-tertiary); font-size: 0.7rem;">No tmux sessions</div>' :
+              (data.tmux || []).map(s => `
+                <div class="tmux-session">
+                  <div class="tmux-session-header ${s.attached ? 'attached' : ''}">
+                    <span>${s.name}</span>
+                    <span style="margin-left: auto; font-size: 0.6rem; color: var(--text-tertiary);">${s.windows} windows</span>
+                  </div>
+                </div>
+              `).join('')}
+          </div>
+          <div class="agents-panel">
+            <div class="tmux-title">Active Agents</div>
+            ${(data.agents || []).length === 0 ? '<div style="color: var(--text-tertiary); font-size: 0.7rem;">No agents detected</div>' :
+              (data.agents || []).map(a => `
+                <div class="agent-item">
+                  <div class="agent-status"></div>
+                  <span class="agent-name">${a.type}</span>
+                  <span class="agent-meta">pid ${a.pid}</span>
+                </div>
+              `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderResourcesContent(data) {
+      if (!data) return '<div class="error">No resources data</div>';
+      const cpu = data.cpu || {};
+      const mem = data.memory || {};
+      const levelClass = (pct) => pct >= 90 ? 'critical' : pct >= 70 ? 'warn' : 'ok';
+      const cpuPct = Math.round(100 - (cpu['headroom-pct'] || 100));
+      const memPct = Math.round(100 - (mem['headroom-pct'] || 100));
+
+      return `
+        <div class="resources-grid">
+          <div class="resource-gauge">
+            <div class="gauge-label">CPU Load</div>
+            <div class="gauge-value ${levelClass(cpuPct)}">${cpu['load-1m'] || 0}</div>
+            <div class="gauge-detail">${cpu.cores || 0} cores</div>
+            <div class="gauge-bar"><div class="gauge-fill ${levelClass(cpuPct)}" style="width: ${cpuPct}%"></div></div>
+          </div>
+          <div class="resource-gauge">
+            <div class="gauge-label">Memory</div>
+            <div class="gauge-value ${levelClass(memPct)}">${memPct}%</div>
+            <div class="gauge-detail">${mem['used-gb'] || 0} / ${mem['total-gb'] || 0} GB</div>
+            <div class="gauge-bar"><div class="gauge-fill ${levelClass(memPct)}" style="width: ${memPct}%"></div></div>
+          </div>
+          ${(data.disk || []).map(d => `
+            <div class="resource-gauge">
+              <div class="gauge-label">Disk ${d.mount}</div>
+              <div class="gauge-value ${levelClass(d['used-pct'] || 0)}">${d['used-pct'] || 0}%</div>
+              <div class="gauge-detail">${d['total-gb'] || 0} GB</div>
+              <div class="gauge-bar"><div class="gauge-fill ${levelClass(d['used-pct'] || 0)}" style="width: ${d['used-pct'] || 0}%"></div></div>
+            </div>
+          `).join('')}
+        </div>
+        <div style="font-size: 0.65rem; color: var(--text-tertiary);">
+          Bottleneck: ${data.bottleneck || ':none'}
+        </div>
+      `;
+    }
+
+    function renderEphemeraContent(data) {
+      if (!data) return '<div class="error">No ephemera data</div>';
+      return `
+        <div class="ephemera-layout">
+          <div class="fluff-panel">
+            <div class="fluff-header">
+              <div class="fluff-source-dot" style="background: var(--ephemera-color)"></div>
+              <span class="fluff-source-label">Live Metrics</span>
+            </div>
+            <div class="fluff-content">
+              <div class="fluff-metric">
+                <span class="fluff-metric-label">uptime</span>
+                <span class="fluff-metric-value live"><span class="live-indicator"></span>${Math.floor((data['uptime-seconds'] || 0) / 86400)}d</span>
+              </div>
+              <div class="fluff-metric">
+                <span class="fluff-metric-label">processes</span>
+                <span class="fluff-metric-value">${(data.processes || []).length}</span>
+              </div>
+              <div class="fluff-metric">
+                <span class="fluff-metric-label">connections</span>
+                <span class="fluff-metric-value">${(data.connections?.established || 0) + (data.connections?.listening || 0)}</span>
+              </div>
+              <div class="fluff-metric">
+                <span class="fluff-metric-label">load</span>
+                <span class="fluff-metric-value">${data.load?.['1m'] || 0} / ${data.load?.['5m'] || 0} / ${data.load?.['15m'] || 0}</span>
+              </div>
+            </div>
+          </div>
+          <div class="fluff-panel" style="grid-column: span 2;">
+            <div class="fluff-header">
+              <div class="fluff-source-dot" style="background: var(--ephemera-color)"></div>
+              <span class="fluff-source-label">Top Processes</span>
+            </div>
+            <div class="fluff-content" style="padding: 0;">
+              <table class="process-table">
+                <thead><tr><th>PID</th><th>User</th><th>CPU%</th><th>MEM%</th><th>Command</th></tr></thead>
+                <tbody>
+                  ${(data.processes || []).slice(0, 5).map(p => `
+                    <tr>
+                      <td>${p.pid}</td>
+                      <td>${p.user}</td>
+                      <td class="process-cpu ${p.cpu > 50 ? 'critical' : p.cpu > 20 ? 'high' : ''}">${p.cpu}</td>
+                      <td>${p.mem}</td>
+                      <td>${(p.cmd || '').slice(0, 40)}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div style="font-size: 0.65rem; color: var(--text-tertiary); margin-top: 0.5rem; text-align: center;">
+          <span class="live-indicator"></span> ${data.timestamp ? new Date(data.timestamp).toISOString() : 'unknown'}
+        </div>
+      `;
+    }
+
+    const RENDERERS = {
+      schema: renderSchemaContent,
+      infrastructure: renderInfrastructureContent,
+      projects: renderProjectsContent,
+      pipelines: renderPipelinesContent,
+      sessions: renderSessionsContent,
+      resources: renderResourcesContent,
+      ephemera: renderEphemeraContent
+    };
+
+    function render() {
+      const app = document.getElementById('app');
+
+      if (state.loading) {
+        app.innerHTML = '<div class="loading">Fetching witness data...</div>';
+        return;
+      }
+
+      if (state.error) {
+        app.innerHTML = `
+          <div class="error">
+            <div>Failed to fetch witness data</div>
+            <div style="font-size: 0.8rem; margin-top: 0.5rem;">${state.error}</div>
+            <button class="btn" style="margin-top: 1rem;" onclick="fetchWitness()">Retry</button>
+          </div>
+        `;
+        return;
+      }
+
+      const data = state.data || {};
+      const strata = data.strata || {};
+
+      app.innerHTML = `
+        <header class="header">
+          <div>
+            <div class="server-name">${strata.schema?.hostname || data.hostname || 'hyperstitious'}</div>
+            <div class="server-subtitle">Seven strata of permanence — essence ↔ manifestation</div>
+          </div>
+          <div class="header-meta">
+            <div>${new Date().toISOString().slice(0, 19).replace('T', ' ')} UTC</div>
+            <div>witness v0.1</div>
+          </div>
+        </header>
+
+        <div class="strata">
+          ${STRATA_CONFIG.map(s => {
+            const stratumData = strata[s.id] || {};
+            const isExpanded = state.expanded.has(s.id);
+            const renderer = RENDERERS[s.id];
+
+            return `
+              <div class="stratum ${isExpanded ? 'expanded' : ''}" data-stratum="${s.id}">
+                <div class="stratum-header" onclick="toggleStratum('${s.id}')">
+                  <div class="stratum-title">
+                    <span class="stratum-name">${s.name}</span>
+                    <span class="stratum-tagline">${s.tagline}</span>
+                  </div>
+                  <div class="stratum-meta">
+                    ${s.id === 'schema' ? '<span style="color: var(--schema-color);">∞</span>' : ''}
+                    ${s.id === 'ephemera' ? '<span style="color: var(--ephemera-color);">⟲</span>' : ''}
+                  </div>
+                </div>
+                <div class="stratum-content">
+                  <div class="stratum-content-inner">
+                    ${renderer ? renderer(stratumData) : '<div>No renderer</div>'}
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+
+        <div class="controls">
+          <button class="btn" onclick="fetchWitness()">↻ Refresh</button>
+          <button class="btn schema-btn" onclick="focusSchema()">∞ Schema</button>
+          <button class="btn" onclick="expandAll()">Expand All</button>
+          <button class="btn" onclick="collapseAll()">Collapse All</button>
+          <button class="btn ephemera-btn" onclick="focusEphemera()">⟲ Ephemera</button>
+        </div>
+
+        <div class="invariant-note">
+          Schema contains all schemas, starting with itself — a fixpoint.<br>
+          Ephemera aggregates all transient surfaces, mapping back to their sources.
+        </div>
+      `;
+    }
+
+    window.toggleStratum = (id) => { state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id); render(); };
+    window.selectSchema = (id) => { state.selectedSchema = id; render(); };
+    window.expandAll = () => { STRATA_CONFIG.forEach(s => state.expanded.add(s.id)); render(); };
+    window.collapseAll = () => { state.expanded.clear(); render(); };
+    window.focusSchema = () => { state.expanded.clear(); state.expanded.add('schema'); render(); };
+    window.focusEphemera = () => { state.expanded.clear(); state.expanded.add('ephemera'); render(); };
+
+    fetchWitness();
+  </script>
+</body>
+</html>

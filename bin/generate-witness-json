@@ -1,0 +1,22 @@
+#!/bin/bash
+# Generate witness.json for the foldunfold SPA
+# This runs periodically to update the API endpoint
+
+set -e
+
+WITNESS_BIN_DIR="/home/uprootiny/repos/foldunfold/bin"
+OUTPUT_DIR="/var/www/drops/foldunfold/api"
+
+cd "$WITNESS_BIN_DIR"
+
+# Run witness-all and convert EDN to JSON
+# For now, output EDN directly (the SPA can parse it)
+./witness-all > /tmp/witness.edn 2>/dev/null
+
+# Copy to output
+cp /tmp/witness.edn "$OUTPUT_DIR/witness"
+
+# Set permissions
+chmod 644 "$OUTPUT_DIR/witness"
+
+echo "Witness data updated at $(date -Iseconds)"

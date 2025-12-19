@@ -1,0 +1,27 @@
+;; Server definitions for multi-server witness aggregation
+;; Each server has an endpoint where witness-all can be reached
+
+{:servers
+ [{:id :hyperstitious
+   :name "Hyperstitious"
+   :host "hyperstitious.org"
+   :endpoint "/foldunfold/api/witness"
+   :role :primary-web
+   :color "#4a90d9"}
+
+  {:id :karlsruhe
+   :name "Karlsruhe"
+   :host "karlsruhe.hyperstitious.org"
+   :endpoint "/foldunfold/api/witness"
+   :role :compute
+   :color "#d9a04a"}
+
+  {:id :dissemblage
+   :name "Dissemblage"
+   :host "dissemblage.art"
+   :endpoint "/foldunfold/api/witness"
+   :role :secondary-web
+   :color "#90d94a"}]
+
+ :local-server :hyperstitious
+ :refresh-interval-ms 30000}

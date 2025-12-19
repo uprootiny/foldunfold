@@ -1,0 +1,85 @@
+#!/usr/bin/env bb
+;; witness-pipelines: Output data flows and scheduled jobs as EDN
+;; Inspects cron jobs, systemd timers, and known pipeline definitions
+
+(require '[clojure.string :as str]
+         '[babashka.process :refer [shell]]
+         '[babashka.fs :as fs])
+
+(defn sh [& args]
+  (try
+    (-> (apply shell {:out :string :err :string} args)
+        :out
+        str/trim)
+    (catch Exception _ "")))
+
+(defn parse-crontab []
+  (let [output (sh "crontab" "-l")]
+    (if (or (str/blank? output) (str/includes? output "no crontab"))
+      []
+      (->> (str/split-lines output)
+           (filter #(not (str/starts-with? % "#")))
+           (filter #(not (str/blank? %)))
+           (map (fn [line]
+                  (let [parts (str/split line #"\s+" 6)
+                        schedule (str/join " " (take 5 parts))
+                        command (nth parts 5 "")]
+                    {:schedule schedule
+                     :command command
+                     :type :cron})))
+           vec))))
+
+(defn parse-systemd-timers []
+  (let [output (sh "systemctl" "list-timers" "--no-pager" "--no-legend")]
+    (if (str/blank? output)
+      []
+      (->> (str/split-lines output)
+           (map (fn [line]
+                  (let [parts (str/split line #"\s+")
+                        unit (some #(when (str/ends-with? % ".timer") %) parts)]
+                    (when unit
+                      {:name (str/replace unit #"\.timer$" "")
+                       :type :systemd-timer}))))
+           (filter identity)
+           vec))))
+
+(defn find-deploy-scripts []
+  (let [paths ["/home/uprootiny/repos"
+               "/home/uprootiny/drops"]]
+    (->> paths
+         (filter fs/exists?)
+         (mapcat #(try (fs/glob % "**/deploy*.sh") (catch Exception _ [])))
+         (map (fn [p]
+                {:path (str p)
+                 :name (fs/file-name p)
+                 :type :deploy-script}))
+         vec)))
+
+(defn find-github-actions []
+  (let [repos-dir "/home/uprootiny/repos"]
+    (when (fs/exists? repos-dir)
+      (->> (fs/list-dir repos-dir)
+           (mapcat (fn [repo]
+                     (let [workflows-dir (str repo "/.github/workflows")]
+                       (when (fs/exists? workflows-dir)
+                         (->> (fs/list-dir workflows-dir)
+                              (filter #(str/ends-with? (str %) ".yml"))
+                              (map (fn [f]
+                                     {:repo (fs/file-name repo)
+                                      :workflow (fs/file-name f)
+                                      :type :github-action})))))))
+           vec))))
+
+(defn main []
+  (let [cron (parse-crontab)
+        timers (parse-systemd-timers)
+        deploys (find-deploy-scripts)
+        actions (find-github-actions)]
+    (println
+     (str "{:cron " (pr-str cron) "\n"
+          " :systemd-timers " (pr-str timers) "\n"
+          " :deploy-scripts " (pr-str deploys) "\n"
+          " :github-actions " (pr-str actions) "\n"
+          " :timestamp \"" (sh "date" "-Iseconds") "\"}"))))
+
+(main)

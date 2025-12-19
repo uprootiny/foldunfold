@@ -1,0 +1,80 @@
+#!/usr/bin/env bb
+;; witness-sessions: Output active work contexts as EDN
+;; Inspects tmux sessions, SSH connections, screen sessions
+
+(require '[clojure.string :as str]
+         '[babashka.process :refer [shell]])
+
+(defn sh [& args]
+  (try
+    (-> (apply shell {:out :string :err :string} args)
+        :out
+        str/trim)
+    (catch Exception _ "")))
+
+(defn parse-tmux-sessions []
+  (let [output (sh "tmux" "list-sessions" "-F" "#{session_name}|#{session_windows}|#{session_attached}|#{session_created}")]
+    (if (str/blank? output)
+      []
+      (->> (str/split-lines output)
+           (map (fn [line]
+                  (let [[name windows attached created] (str/split line #"\|")]
+                    {:name name
+                     :windows (try (Integer/parseInt windows) (catch Exception _ 0))
+                     :attached (= attached "1")
+                     :created-epoch (try (Long/parseLong created) (catch Exception _ 0))})))
+           vec))))
+
+(defn parse-ssh-connections []
+  (let [output (sh "who")]
+    (if (str/blank? output)
+      []
+      (->> (str/split-lines output)
+           (map (fn [line]
+                  (let [[user tty date time host] (str/split line #"\s+")
+                        host-clean (when host (str/replace host #"[()]" ""))]
+                    {:user user
+                     :tty tty
+                     :login-time (str date " " time)
+                     :from (or host-clean "local")})))
+           vec))))
+
+(defn parse-screen-sessions []
+  (let [output (sh "screen" "-ls")]
+    (if (or (str/blank? output) (str/includes? output "No Sockets"))
+      []
+      (->> (str/split-lines output)
+           (filter #(re-find #"^\s+\d+" %))
+           (map (fn [line]
+                  (let [[_ id name state] (re-find #"(\d+)\.(\S+)\s+\((\w+)\)" line)]
+                    (when id
+                      {:id id
+                       :name name
+                       :state (keyword (str/lower-case (or state "unknown")))}))))
+           (filter identity)
+           vec))))
+
+(defn find-claude-processes []
+  (let [output (sh "pgrep" "-a" "claude")]
+    (if (str/blank? output)
+      []
+      (->> (str/split-lines output)
+           (map (fn [line]
+                  (let [[pid & cmd-parts] (str/split line #"\s+")]
+                    {:pid (try (Integer/parseInt pid) (catch Exception _ 0))
+                     :command (str/join " " cmd-parts)})))
+           vec))))
+
+(defn main []
+  (let [tmux (parse-tmux-sessions)
+        ssh (parse-ssh-connections)
+        screen (parse-screen-sessions)
+        claude (find-claude-processes)]
+    (println
+     (str "{:tmux " (pr-str tmux) "\n"
+          " :ssh " (pr-str ssh) "\n"
+          " :screen " (pr-str screen) "\n"
+          " :claude-agents " (pr-str claude) "\n"
+          " :timestamp \"" (sh "date" "-Iseconds") "\"}"))))
+
+(main)

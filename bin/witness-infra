@@ -1,0 +1,78 @@
+#!/usr/bin/env bb
+;; witness-infra: Output deployed infrastructure as EDN
+;; Inspects systemd services, docker containers, nginx sites, ports
+
+(require '[clojure.string :as str]
+         '[babashka.process :refer [shell]])
+
+(defn sh [& args]
+  (try
+    (-> (apply shell {:out :string :err :string} args)
+        :out
+        str/trim)
+    (catch Exception _ "")))
+
+(defn parse-systemd-services []
+  (->> (sh "systemctl" "list-units" "--type=service" "--state=running" "--no-pager" "--no-legend")
+       str/split-lines
+       (map #(first (str/split % #"\s+")))
+       (filter #(re-find #"\.service$" %))
+       (map #(str/replace % #"\.service$" ""))
+       (filter #(re-find #"nginx|clojure|java|node|python|postgresql|redis|docker" %))
+       vec))
+
+(defn parse-docker-containers []
+  (let [output (sh "docker" "ps" "--format" "{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}")]
+    (if (str/blank? output)
+      []
+      (->> (str/split-lines output)
+           (map (fn [line]
+                  (let [[name image status ports] (str/split line #"\|")]
+                    {:name name
+                     :image image
+                     :status (if (str/includes? (or status "") "Up") :running :stopped)
+                     :ports (or ports "")})))
+           vec))))
+
+(defn parse-nginx-sites []
+  (let [enabled-dir "/etc/nginx/sites-enabled"
+        files (try (-> (sh "ls" enabled-dir) str/split-lines) (catch Exception _ []))]
+    (->> files
+         (filter #(not (str/blank? %)))
+         (map (fn [f]
+                (let [content (try (slurp (str enabled-dir "/" f)) (catch Exception _ ""))
+                      server-names (re-seq #"server_name\s+([^;]+);" content)
+                      locations (re-seq #"location\s+([^\s{]+)" content)]
+                  {:file f
+                   :domains (->> server-names (map second) (mapcat #(str/split % #"\s+")) (filter #(not= "_" %)) vec)
+                   :locations (->> locations (map second) vec)})))
+         vec)))
+
+(defn parse-listening-ports []
+  (let [output (sh "ss" "-tlnp")]
+    (->> (str/split-lines output)
+         rest  ; skip header
+         (map (fn [line]
+                (let [parts (str/split line #"\s+")
+                      addr (nth parts 3 "")
+                      [_ port] (re-find #":(\d+)$" addr)]
+                  (when port (Integer/parseInt port)))))
+         (filter identity)
+         (filter #(or (< % 1024) (> % 3000)))  ; system or high ports
+         distinct
+         sort
+         vec)))
+
+(defn main []
+  (let [services (parse-systemd-services)
+        containers (parse-docker-containers)
+        sites (parse-nginx-sites)
+        ports (parse-listening-ports)]
+    (println
+     (str "{:services " (pr-str services) "\n"
+          " :containers " (pr-str containers) "\n"
+          " :nginx-sites " (pr-str sites) "\n"
+          " :listening-ports " (pr-str ports) "\n"
+          " :timestamp \"" (sh "date" "-Iseconds") "\"}"))))
+
+(main)

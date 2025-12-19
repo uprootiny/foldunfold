@@ -1,0 +1,50 @@
+#!/bin/bash
+# witness-resources: Output CPU, memory, disk allocation as EDN
+
+set -e
+
+# CPU info
+CORES=$(nproc)
+read LOAD1 LOAD5 LOAD15 _ < /proc/loadavg
+CPU_HEADROOM=$(awk "BEGIN {printf \"%.1f\", 100 - ($LOAD1 / $CORES * 100)}")
+
+# Memory info
+read _ TOTAL _ < <(grep MemTotal /proc/meminfo)
+read _ AVAIL _ < <(grep MemAvailable /proc/meminfo)
+TOTAL_GB=$(awk "BEGIN {printf \"%.2f\", $TOTAL / 1024 / 1024}")
+AVAIL_GB=$(awk "BEGIN {printf \"%.2f\", $AVAIL / 1024 / 1024}")
+USED_GB=$(awk "BEGIN {printf \"%.2f\", ($TOTAL - $AVAIL) / 1024 / 1024}")
+MEM_HEADROOM=$(awk "BEGIN {printf \"%.1f\", $AVAIL / $TOTAL * 100}")
+
+# Disk info - build EDN vector
+DISK_EDN="["
+while read -r line; do
+  MOUNT=$(echo "$line" | awk '{print $6}')
+  TOTAL_D=$(echo "$line" | awk '{print $2}' | sed 's/G//')
+  USED_PCT=$(echo "$line" | awk '{print $5}' | sed 's/%//')
+  if [ -n "$MOUNT" ] && [ "$MOUNT" != "Mounted" ]; then
+    DISK_EDN="$DISK_EDN{:mount \"$MOUNT\" :total-gb $TOTAL_D :used-pct $USED_PCT} "
+  fi
+done < <(df -BG | grep '^/dev')
+DISK_EDN="${DISK_EDN%% }]"
+
+# Identify bottleneck
+if (( $(echo "$CPU_HEADROOM < 20" | bc -l) )); then
+  BOTTLENECK=":cpu"
+elif (( $(echo "$MEM_HEADROOM < 20" | bc -l) )); then
+  BOTTLENECK=":memory"
+else
+  BOTTLENECK=":none"
+fi
+
+cat << EOF
+{:cpu {:cores $CORES
+       :load-1m $LOAD1
+       :load-5m $LOAD5
+       :headroom-pct $CPU_HEADROOM}
+ :memory {:total-gb $TOTAL_GB
+          :used-gb $USED_GB
+          :headroom-pct $MEM_HEADROOM}
+ :disk $DISK_EDN
+ :bottleneck $BOTTLENECK}
+EOF

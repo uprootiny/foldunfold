@@ -1,0 +1,59 @@
+#!/usr/bin/env bb
+;; witness-all: Aggregate all witness tools into a single EDN structure
+;; This is the main endpoint called by the SPA
+
+(require '[clojure.string :as str]
+         '[babashka.process :refer [shell]]
+         '[clojure.edn :as edn])
+
+(def bin-dir (or (System/getenv "WITNESS_BIN_DIR") "/home/uprootiny/repos/foldunfold/bin"))
+
+(defn run-witness [tool]
+  (try
+    (let [result (shell {:out :string :err :string :dir bin-dir} (str "./" tool))]
+      (when (zero? (:exit result))
+        (edn/read-string (:out result))))
+    (catch Exception e
+      {:error (str "Failed to run " tool ": " (.getMessage e))})))
+
+(defn get-schema []
+  (let [schema-file "/home/uprootiny/repos/foldunfold/schema.edn"]
+    (try
+      (edn/read-string (slurp schema-file))
+      (catch Exception _
+        {:error "Schema file not found"}))))
+
+(defn sh [& args]
+  (try
+    (-> (apply shell {:out :string :err :string} args)
+        :out
+        str/trim)
+    (catch Exception _ "")))
+
+(defn main []
+  (let [schema (get-schema)
+        infrastructure (run-witness "witness-infra")
+        projects (run-witness "witness-projects")
+        pipelines (run-witness "witness-pipelines")
+        sessions (run-witness "witness-sessions")
+        resources (shell {:out :string :err :string :dir bin-dir} "./witness-resources")
+        resources-edn (when (zero? (:exit resources))
+                        (try (edn/read-string (:out resources)) (catch Exception _ nil)))
+        ephemera (run-witness "witness-ephemera")
+
+        witness {:witness/version "0.1.0"
+                 :witness/timestamp (sh "date" "-Iseconds")
+                 :witness/server (sh "hostname")
+
+                 :schema schema
+                 :infrastructure infrastructure
+                 :projects projects
+                 :pipelines pipelines
+                 :sessions sessions
+                 :resources resources-edn
+                 :ephemera ephemera}]
+
+    ;; Output as pretty-printed EDN
+    (println (pr-str witness))))
+
+(main)

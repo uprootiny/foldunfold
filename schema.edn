@@ -1,0 +1,64 @@
+;; /opt/witness/schema.edn
+;; The Schema stratum: self-describing specification for all strata
+
+{:witness/version "0.1.0"
+
+ :strata
+ {:schema
+  {:description "The server's Platonic form"
+   :tool "witness-schema"
+   :refresh-seconds nil
+   :spec {:hostname :string
+          :hardware {:cpu :string :cores :int :memory-gb :number}
+          :network {:public-ip :string :interfaces [:string]}
+          :os {:type :keyword :version :string}
+          :identity {:role :keyword :name :string}}}
+
+  :infrastructure
+  {:description "Deployed configuration"
+   :tool "witness-infra"
+   :refresh-seconds 300
+   :spec {:services [{:name :string :status :keyword :type :keyword}]
+          :containers [{:id :string :image :string :status :string}]
+          :mounts [{:source :string :target :string :type :string}]}}
+
+  :projects
+  {:description "Repositories and their state"
+   :tool "witness-projects"
+   :refresh-seconds 3600
+   :spec {:repos [{:path :string :branch :string :dirty :boolean
+                   :last-commit {:sha :string :time :inst :msg :string}}]}}
+
+  :pipelines
+  {:description "Data flows and scheduled jobs"
+   :tool "witness-pipelines"
+   :refresh-seconds 60
+   :spec {:cron [{:schedule :string :command :string :last-run :inst}]
+          :jobs [{:name :string :status :keyword :pid :int}]}}
+
+  :sessions
+  {:description "Active work contexts"
+   :tool "witness-sessions"
+   :refresh-seconds 30
+   :spec {:tmux [{:name :string :windows :int :attached :boolean}]
+          :ssh [{:user :string :from :string :tty :string}]
+          :agents [{:type :keyword :pid :int :cwd :string}]}}
+
+  :resources
+  {:description "Allocation and headroom"
+   :tool "witness-resources"
+   :refresh-seconds 10
+   :spec {:cpu {:cores :int :load-1m :number :load-5m :number :headroom-pct :number}
+          :memory {:total-gb :number :used-gb :number :headroom-pct :number}
+          :disk [{:mount :string :total-gb :number :used-pct :number}]
+          :bottleneck :keyword}}
+
+  :ephemera
+  {:description "Right now"
+   :tool "witness-ephemera"
+   :refresh-seconds 5
+   :spec {:timestamp :inst
+          :uptime-seconds :int
+          :processes [{:pid :int :user :string :cpu :number :mem :number :cmd :string}]
+          :connections {:established :int :listening :int}
+          :load {:1m :number :5m :number :15m :number}}}}}

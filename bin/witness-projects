@@ -1,0 +1,69 @@
+#!/usr/bin/env bb
+;; witness-projects: Output git repositories and their state as EDN
+;; Scans known repo directories for git status
+
+(require '[clojure.string :as str]
+         '[babashka.process :refer [shell]]
+         '[babashka.fs :as fs])
+
+(def repo-roots
+  ["/home/uprootiny/repos"
+   "/home/uprootiny/drops"
+   "/var/www/drops"])
+
+(defn sh-in [dir & args]
+  (try
+    (-> (apply shell {:out :string :err :string :dir dir} args)
+        :out
+        str/trim)
+    (catch Exception _ "")))
+
+(defn sh [& args]
+  (try
+    (-> (apply shell {:out :string :err :string} args)
+        :out
+        str/trim)
+    (catch Exception _ "")))
+
+(defn git-repo? [path]
+  (fs/exists? (str path "/.git")))
+
+(defn analyze-repo [path]
+  (when (git-repo? path)
+    (let [name (fs/file-name path)
+          branch (sh-in path "git" "rev-parse" "--abbrev-ref" "HEAD")
+          commit (sh-in path "git" "rev-parse" "--short" "HEAD")
+          status-output (sh-in path "git" "status" "--porcelain")
+          has-changes (not (str/blank? status-output))
+          changed-count (if has-changes (count (str/split-lines status-output)) 0)
+          last-commit-time (sh-in path "git" "log" "-1" "--format=%ci")
+          remote (sh-in path "git" "remote" "get-url" "origin")]
+      {:name name
+       :path (str path)
+       :branch (if (str/blank? branch) "main" branch)
+       :commit commit
+       :dirty has-changes
+       :changes changed-count
+       :last-commit last-commit-time
+       :remote (when-not (str/blank? remote) remote)})))
+
+(defn find-repos [root]
+  (when (fs/exists? root)
+    (->> (fs/list-dir root)
+         (map str)
+         (filter git-repo?)
+         (map analyze-repo)
+         (filter identity))))
+
+(defn main []
+  (let [all-repos (->> repo-roots
+                       (mapcat find-repos)
+                       (sort-by :name)
+                       vec)]
+    (println
+     (str "{:repositories " (pr-str all-repos) "\n"
+          " :count " (count all-repos) "\n"
+          " :dirty-count " (count (filter :dirty all-repos)) "\n"
+          " :timestamp \"" (sh "date" "-Iseconds") "\"}"))))
+
+(main)

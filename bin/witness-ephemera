@@ -1,0 +1,86 @@
+#!/usr/bin/env bb
+;; witness-ephemera: Output right-now transient state as EDN
+;; Current processes, network connections, recent logs
+
+(require '[clojure.string :as str]
+         '[babashka.process :refer [shell]])
+
+(defn sh [& args]
+  (try
+    (-> (apply shell {:out :string :err :string} args)
+        :out
+        str/trim)
+    (catch Exception _ "")))
+
+(defn parse-top-processes []
+  (let [output (sh "ps" "aux" "--sort=-%cpu" "--no-headers")]
+    (->> (str/split-lines output)
+         (take 10)
+         (map (fn [line]
+                (let [parts (str/split line #"\s+" 11)
+                      [user pid cpu mem vsz rss tty stat start time command] parts]
+                  {:user user
+                   :pid (try (Integer/parseInt pid) (catch Exception _ 0))
+                   :cpu (try (Double/parseDouble cpu) (catch Exception _ 0.0))
+                   :mem (try (Double/parseDouble mem) (catch Exception _ 0.0))
+                   :command (or command "")})))
+         vec)))
+
+(defn parse-network-connections []
+  (let [output (sh "ss" "-tunapH")]
+    (->> (str/split-lines output)
+         (take 20)
+         (map (fn [line]
+                (let [parts (str/split line #"\s+")
+                      proto (first parts)
+                      state (nth parts 1 "")
+                      local (nth parts 4 "")
+                      remote (nth parts 5 "")]
+                  {:proto proto
+                   :state state
+                   :local local
+                   :remote remote})))
+         (filter #(not (str/blank? (:proto %))))
+         vec)))
+
+(defn get-uptime []
+  (let [output (sh "uptime" "-p")]
+    (str/replace output #"^up " "")))
+
+(defn get-load-avg []
+  (let [output (sh "cat" "/proc/loadavg")
+        [l1 l5 l15 procs _] (str/split output #"\s+")
+        [running total] (when procs (str/split procs #"/"))]
+    {:load-1m (try (Double/parseDouble l1) (catch Exception _ 0.0))
+     :load-5m (try (Double/parseDouble l5) (catch Exception _ 0.0))
+     :load-15m (try (Double/parseDouble l15) (catch Exception _ 0.0))
+     :processes-running (try (Integer/parseInt running) (catch Exception _ 0))
+     :processes-total (try (Integer/parseInt total) (catch Exception _ 0))}))
+
+(defn get-recent-logins []
+  (let [output (sh "last" "-n" "5" "--time-format" "iso")]
+    (->> (str/split-lines output)
+         (take 5)
+         (filter #(not (str/blank? %)))
+         (filter #(not (str/starts-with? % "wtmp")))
+         (map (fn [line]
+                (let [[user tty from time-rest] (str/split line #"\s+" 4)]
+                  {:user user :tty tty :from from})))
+         vec)))
+
+(defn main []
+  (let [now (sh "date" "-Iseconds")
+        uptime (get-uptime)
+        load (get-load-avg)
+        procs (parse-top-processes)
+        conns (parse-network-connections)
+        logins (get-recent-logins)]
+    (println
+     (str "{:timestamp \"" now "\"\n"
+          " :uptime \"" uptime "\"\n"
+          " :load " (pr-str load) "\n"
+          " :top-processes " (pr-str procs) "\n"
+          " :connections " (pr-str conns) "\n"
+          " :recent-logins " (pr-str logins) "}"))))
+
+(main)
